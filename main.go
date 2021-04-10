@@ -42,13 +42,28 @@ func scanAndOrg(ctx context.Context, src, dst string) error {
 	return filepath.Walk(src, selectEXIFFile(dst))
 }
 
+func validExt(ext string) bool {
+	oks := map[string]struct{}{
+		".jpg":  {},
+		".jpeg": {},
+		".png":  {},
+		".gif":  {},
+		".tiff": {},
+		".webp": {},
+	}
+	_, ok := oks[ext]
+	return ok
+}
+
 func selectEXIFFile(dst string) func(path string, info fs.FileInfo, err error) error {
 	return func(path string, info fs.FileInfo, err error) error {
 		if path == "." {
 			return nil
 		}
 
-		if !strings.HasSuffix(path, ".jpg") {
+		ext := filepath.Ext(path)
+		ext = strings.ToLower(ext)
+		if !validExt(ext) {
 			return nil
 		}
 
