@@ -1,6 +1,6 @@
 # Dir Pic
 
-A simple tool to organize pictures that have date EXIF metadata into date folders.
+A simple tool to organize pictures 🖼️ that have date EXIF metadata into date 📆 folders.
 
 ```
 - 2021
