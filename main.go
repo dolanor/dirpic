@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -69,12 +70,12 @@ func selectEXIFFile(dst string) func(path string, info fs.FileInfo, err error) e
 
 		f, err := os.Open(path)
 		if err != nil {
-			return err
+			return fmt.Errorf("opening '%s': %w", path, err)
 		}
 
 		x, err := exif.Decode(f)
 		if err != nil {
-			return err
+			return fmt.Errorf("decoding '%s': %w", path, err)
 		}
 
 		t, err := x.DateTime()
@@ -88,16 +89,20 @@ func selectEXIFFile(dst string) func(path string, info fs.FileInfo, err error) e
 
 		err = os.MkdirAll(finalDst, os.ModePerm)
 		if err != nil {
-			return err
+			return fmt.Errorf("making dest dir '%s': %w", finalDst, err)
 		}
 
 		err = os.Link(path, filepath.Join(finalDst, info.Name()))
 		if err != nil {
+			if le, ok := err.(*os.LinkError); ok {
+				log.Printf("%T: %#v", le.Err, le.Err)
+				return nil
+			}
 			if errors.Is(err, os.ErrExist) {
 				log.Println(err)
 				return nil
 			}
-			return err
+			return fmt.Errorf("link '%s/%s': %w", finalDst, info.Name(), err)
 		}
 		return nil
 	}
