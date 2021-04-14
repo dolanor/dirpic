@@ -32,6 +32,13 @@ func run(args []string) error {
 			dst := args[1]
 			return scanAndOrg(ctx, src, dst)
 		},
+		UsageFunc: func(c *ffcli.Command) string {
+			return `Usage: dirpic SRC DST
+	SRC: the source directory to scan for images
+	DST: the destination directory to write the images to in a chronological tree
+
+For now, SRC and DST must be on the same mount, because it uses hard links to be efficient`
+		},
 	}
 	exif.RegisterParsers(mknote.All...)
 	return root.ParseAndRun(context.Background(), args)
