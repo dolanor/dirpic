@@ -9,11 +9,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/peterbourgon/ff/v3/ffcli"
 	"github.com/rwcarlsen/goexif/exif"
 	"github.com/rwcarlsen/goexif/mknote"
 )
+
+// previousNightHour set the max hour a picture can be in a previous album.
+// e.g.: if you take a picture during a party at 3am, it will be put in the
+// previous day album directory.
+const previousNightHour = 6
 
 func main() {
 	err := run(os.Args[1:])
@@ -51,16 +57,18 @@ func scanAndOrg(ctx context.Context, src, dst string) error {
 }
 
 func validExt(ext string) bool {
-	oks := map[string]struct{}{
-		".jpg":  {},
-		".jpeg": {},
-		".png":  {},
-		".gif":  {},
-		".tiff": {},
-		".webp": {},
+	ext = strings.ToLower(ext)
+	switch ext {
+	case ".jpg",
+		".jpeg",
+		".png",
+		".gif",
+		".tiff",
+		".webp":
+		return true
+	default:
+		return false
 	}
-	_, ok := oks[ext]
-	return ok
 }
 
 func selectEXIFFile(dst string) func(path string, info fs.FileInfo, err error) error {
@@ -70,28 +78,44 @@ func selectEXIFFile(dst string) func(path string, info fs.FileInfo, err error) e
 		}
 
 		ext := filepath.Ext(path)
-		ext = strings.ToLower(ext)
 		if !validExt(ext) {
 			return nil
 		}
 
 		f, err := os.Open(path)
 		if err != nil {
-			return fmt.Errorf("opening '%s': %w", path, err)
+			return fmt.Errorf("opening %q: %w", path, err)
 		}
 
 		x, err := exif.Decode(f)
 		if err != nil {
-			return fmt.Errorf("decoding '%s': %w", path, err)
+			log.Printf("decoding %q: %s", path, err)
 		}
 
-		t, err := x.DateTime()
-		if err != nil {
-			log.Printf("%s: no date info", path)
-			return nil
+		// whatever picture taken before 6am will be added to the previous day instead
+		// TODO: make it a config
+		t := time.Date(0, time.January, 1, previousNightHour, 0, 0, 0, time.UTC)
+
+		if x != nil {
+			t, err = x.DateTime()
+			if err != nil {
+				log.Printf("%s: no date info", path)
+				return nil
+			}
+		}
+
+		log.Println(t.Date())
+		log.Println(t.Hour())
+		if t.Hour() < 6 {
+			t = t.Add(-6 * time.Hour)
 		}
 
 		dstSubDir := t.Format("2006/01/2006-01-02_")
+		log.Println(dstSubDir)
+
+		// Make it compatible with non UNIX OSes
+		dstSubDir = filepath.FromSlash(dstSubDir)
+
 		finalDst := filepath.Join(dst, dstSubDir)
 
 		err = os.MkdirAll(finalDst, os.ModePerm)
@@ -102,11 +126,11 @@ func selectEXIFFile(dst string) func(path string, info fs.FileInfo, err error) e
 		err = os.Link(path, filepath.Join(finalDst, info.Name()))
 		if err != nil {
 			if le, ok := err.(*os.LinkError); ok {
-				log.Printf("%T: %#v", le.Err, le.Err)
+				log.Printf("linkerror: %q: %T: %s", path, le.Err, le.Err)
 				return nil
 			}
 			if errors.Is(err, os.ErrExist) {
-				log.Println(err)
+				log.Println("errexist:", err)
 				return nil
 			}
 			return fmt.Errorf("link '%s/%s': %w", finalDst, info.Name(), err)
