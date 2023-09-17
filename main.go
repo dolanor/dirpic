@@ -53,7 +53,7 @@ For now, SRC and DST must be on the same mount, because it uses hard links to be
 // scanAndOrg will scan the src directory for data with EXIF metadata
 // and hard link (or copy if not possible) into dst directory.
 func scanAndOrg(ctx context.Context, src, dst string) error {
-	return filepath.Walk(src, selectEXIFFile(dst))
+	return filepath.Walk(src, selectEXIFFile(src, dst))
 }
 
 func validExt(ext string) bool {
@@ -71,14 +71,15 @@ func validExt(ext string) bool {
 	}
 }
 
-func selectEXIFFile(dst string) func(path string, info fs.FileInfo, err error) error {
+func selectEXIFFile(src, dst string) func(path string, info fs.FileInfo, err error) error {
 	return func(path string, info fs.FileInfo, err error) error {
-		if path == "." {
+		if path == "." || path == src {
 			return nil
 		}
 
 		ext := filepath.Ext(path)
 		if !validExt(ext) {
+			log.Printf("%s : not correct extension", path)
 			return nil
 		}
 
@@ -104,14 +105,11 @@ func selectEXIFFile(dst string) func(path string, info fs.FileInfo, err error) e
 			}
 		}
 
-		log.Println(t.Date())
-		log.Println(t.Hour())
 		if t.Hour() < 6 {
 			t = t.Add(-6 * time.Hour)
 		}
 
 		dstSubDir := t.Format("2006/01/2006-01-02_")
-		log.Println(dstSubDir)
 
 		// Make it compatible with non UNIX OSes
 		dstSubDir = filepath.FromSlash(dstSubDir)
@@ -123,6 +121,8 @@ func selectEXIFFile(dst string) func(path string, info fs.FileInfo, err error) e
 			return fmt.Errorf("making dest dir '%s': %w", finalDst, err)
 		}
 
+		// TODO check for same filesystem
+		// TODO start a copy if not on the same FS
 		err = os.Link(path, filepath.Join(finalDst, info.Name()))
 		if err != nil {
 			if le, ok := err.(*os.LinkError); ok {
