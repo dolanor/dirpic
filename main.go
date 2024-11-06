@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -53,44 +54,83 @@ For now, SRC and DST must be on the same mount, because it uses hard links to be
 // scanAndOrg will scan the src directory for data with EXIF metadata
 // and hard link (or copy if not possible) into dst directory.
 func scanAndOrg(ctx context.Context, src, dst string) error {
-	return filepath.Walk(src, selectEXIFFile(src, dst))
+	return filepath.WalkDir(src, selectEXIFFile(src, dst))
 }
 
 func validExt(ext string) bool {
 	ext = strings.ToLower(ext)
 	switch ext {
-	case ".jpg",
+	case
+		".jpg",
 		".jpeg",
-		".png",
-		".gif",
+		".heic",
+		".heif",
+		//".gif",
 		".tiff",
-		".webp":
+		".tif",
+		".avi",
+		".mpg",
+		".mp4",
+		".mov":
+		//".webp",
+		//".png":
 		return true
 	default:
 		return false
 	}
 }
 
-func selectEXIFFile(src, dst string) func(path string, info fs.FileInfo, err error) error {
-	return func(path string, info fs.FileInfo, err error) error {
+func selectEXIFFile(src, dst string) fs.WalkDirFunc {
+	return func(path string, d fs.DirEntry, err error) error {
 		if path == "." || path == src {
 			return nil
 		}
 
+		// if d.IsDir() {
+		//	name := d.Name()
+		//	pref, dirNumStr, ok := strings.Cut(name, ".")
+
+		//	if ok {
+		//		dirNum, err := strconv.Atoi(dirNumStr)
+		//		if err == nil {
+		//			if pref == "recup_dir" && dirNum <= 7920 {
+		//				return fs.SkipDir
+		//			}
+		//		}
+		//	}
+		//}
+
 		ext := filepath.Ext(path)
 		if !validExt(ext) {
-			log.Printf("%s : not correct extension", path)
+			// log.Printf("%s : not correct extension", path)
 			return nil
 		}
 
+		// info, err := d.Info()
+		// if err != nil {
+		// 	return fmt.Errorf("error reading file info: %w", err)
+		// }
+		//
+		// if info.Size() <= 500_000_000 {
+		// 	return nil
+		// }
+
+		log.Printf("processing: %s", path)
 		f, err := os.Open(path)
 		if err != nil {
 			return fmt.Errorf("opening %q: %w", path, err)
 		}
 
+		fileNameDate, err := getDateFromFileName(f.Name(), ext)
+		if err != nil {
+			log.Println(fmt.Errorf("getting date from file name %q: %w", f.Name(), err))
+		}
+
 		x, err := exif.Decode(f)
 		if err != nil {
-			log.Printf("decoding %q: %s", path, err)
+			if ext != ".mp4" {
+				log.Printf("exif: decoding %q: %s", path, err)
+			}
 		}
 
 		// whatever picture taken before 6am will be added to the previous day instead
@@ -100,9 +140,12 @@ func selectEXIFFile(src, dst string) func(path string, info fs.FileInfo, err err
 		if x != nil {
 			t, err = x.DateTime()
 			if err != nil {
-				log.Printf("%s: no date info", path)
-				return nil
+				log.Printf("no date info %q: %s", path, err)
+				// return nil
 			}
+		}
+		if x == nil {
+			t = fileNameDate
 		}
 
 		if t.Hour() < 6 {
@@ -118,23 +161,59 @@ func selectEXIFFile(src, dst string) func(path string, info fs.FileInfo, err err
 
 		err = os.MkdirAll(finalDst, os.ModePerm)
 		if err != nil {
-			return fmt.Errorf("making dest dir '%s': %w", finalDst, err)
+			return fmt.Errorf("making dest dir %q: %w", finalDst, err)
 		}
 
 		// TODO check for same filesystem
 		// TODO start a copy if not on the same FS
-		err = os.Link(path, filepath.Join(finalDst, info.Name()))
+		dst := filepath.Join(finalDst, d.Name())
+		err = os.Link(path, dst)
 		if err != nil {
 			if le, ok := err.(*os.LinkError); ok {
-				log.Printf("linkerror: %q: %T: %s", path, le.Err, le.Err)
+				err = fileCopy(path, dst)
+				if err != nil {
+					log.Printf("error: %q: %T: %s", path, err, err)
+					log.Printf("linkerror: %q: %T: %s", path, le.Err, le.Err)
+					return nil
+				}
 				return nil
 			}
 			if errors.Is(err, os.ErrExist) {
 				log.Println("errexist:", err)
 				return nil
 			}
-			return fmt.Errorf("link '%s/%s': %w", finalDst, info.Name(), err)
+			return fmt.Errorf("link '%s/%s': %w", finalDst, d.Name(), err)
 		}
 		return nil
 	}
+}
+
+func fileCopy(srcPath, dstPath string) error {
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+
+	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY, 0o660)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(dst, src)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func getDateFromFileName(filePath, ext string) (time.Time, error) {
+	_, fileName := filepath.Split(filePath)
+	dateStr := fileName[:15] //strings.TrimSuffix(fileName, ext)
+
+	t, err := time.Parse("20060102_150405", dateStr)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return t, nil
 }
