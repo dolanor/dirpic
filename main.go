@@ -37,7 +37,9 @@ func run(args []string) error {
 			}
 			src := args[0]
 			dst := args[1]
-			return scanAndOrg(ctx, src, dst)
+			err := scanAndOrg(ctx, src, dst)
+
+			return err
 		},
 		UsageFunc: func(c *ffcli.Command) string {
 			return `Usage: dirpic SRC DST
@@ -81,7 +83,15 @@ func validExt(ext string) bool {
 }
 
 func selectEXIFFile(src, dst string) fs.WalkDirFunc {
-	return func(path string, d fs.DirEntry, err error) error {
+	return func(path string, d fs.DirEntry, inerr error) (err error) {
+		if !strings.HasPrefix(filepath.Base(path), "20241106") {
+			return nil
+		}
+
+		if inerr != nil {
+			return err
+		}
+
 		if path == "." || path == src {
 			return nil
 		}
@@ -115,44 +125,9 @@ func selectEXIFFile(src, dst string) fs.WalkDirFunc {
 		// 	return nil
 		// }
 
-		log.Printf("processing: %s", path)
 		f, err := os.Open(path)
 		if err != nil {
 			return fmt.Errorf("opening %q: %w", path, err)
-		}
-
-		// TODO: make it a config
-		t := time.Date(0, time.January, 1, previousNightHour, 0, 0, 0, time.UTC)
-		dstSubDir := t.Format("2006/01/2006-01-02_")
-
-		// Make it compatible with non UNIX OSes
-		dstSubDir = filepath.FromSlash(dstSubDir)
-
-		finalDst := filepath.Join(dst, dstSubDir)
-
-		dst := filepath.Join(finalDst, d.Name())
-
-		fi, err := f.Stat()
-		if err != nil {
-			return fmt.Errorf("stat-ing %q: %w", path, err)
-		}
-
-		di, err := f.Stat()
-		if err == nil {
-			// there is destination file, so we can optimize with last update checks
-			// and hard link similarities
-
-			if os.SameFile(fi, di) {
-				log.Println("ignore: same hard link")
-				// they have been hard linked already, we should just skip it
-				return nil
-			}
-
-			if di.ModTime().Compare(fi.ModTime()) == 0 {
-				log.Println("ignore: same last update date")
-				// we can skip as they have not been modified since last time
-				return nil
-			}
 		}
 
 		fileNameDate, err := getDateFromFileName(f.Name(), ext)
@@ -168,12 +143,13 @@ func selectEXIFFile(src, dst string) fs.WalkDirFunc {
 		}
 
 		// whatever picture taken before 6am will be added to the previous day instead
+		// TODO: make it a config
+		t := time.Date(0, time.January, 1, previousNightHour, 0, 0, 0, time.UTC)
 
 		if x != nil {
 			t, err = x.DateTime()
 			if err != nil {
 				log.Printf("no date info %q: %s", path, err)
-				// return nil
 			}
 		}
 		if x == nil {
@@ -184,6 +160,35 @@ func selectEXIFFile(src, dst string) fs.WalkDirFunc {
 			t = t.Add(-6 * time.Hour)
 		}
 
+		dstSubDir := t.Format("2006/01/2006-01-02_")
+
+		// Make it compatible with non UNIX OSes
+		dstSubDir = filepath.FromSlash(dstSubDir)
+
+		finalDst := filepath.Join(dst, dstSubDir)
+
+		dst := filepath.Join(finalDst, d.Name())
+
+		fi, err := f.Stat()
+		if err != nil {
+			return fmt.Errorf("stat-ing %q: %w", path, err)
+		}
+
+		di, err := os.Stat(dst)
+		if err == nil {
+			// there is destination file, so we can optimize with last update checks
+			// and hard link similarities
+
+			if os.SameFile(fi, di) {
+				// they have been hard linked already, we should just skip it
+				return nil
+			}
+
+			if di.ModTime().Compare(fi.ModTime()) == 0 {
+				// we can skip as they have not been modified since last time
+				return nil
+			}
+		}
 		err = os.MkdirAll(finalDst, os.ModePerm)
 		if err != nil {
 			return fmt.Errorf("making dest dir %q: %w", finalDst, err)
