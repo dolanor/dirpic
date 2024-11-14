@@ -84,10 +84,6 @@ func validExt(ext string) bool {
 
 func selectEXIFFile(src, dst string) fs.WalkDirFunc {
 	return func(path string, d fs.DirEntry, inerr error) (err error) {
-		if !strings.HasPrefix(filepath.Base(path), "20241106") {
-			return nil
-		}
-
 		if inerr != nil {
 			return err
 		}
