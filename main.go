@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -126,15 +127,15 @@ func selectEXIFFile(src, dst string) fs.WalkDirFunc {
 			return fmt.Errorf("opening %q: %w", path, err)
 		}
 
-		fileNameDate, err := getDateFromFileName(f.Name(), ext)
+		fileNameDate, err := getDateFromFileName(f.Name())
 		if err != nil {
-			log.Println(fmt.Errorf("getting date from file name %q: %w", f.Name(), err))
+			slog.Info("getting date from file name", "filename", f.Name(), "error", err)
 		}
 
 		x, err := exif.Decode(f)
 		if err != nil {
 			if ext != ".mp4" {
-				log.Printf("exif: decoding %q: %s", path, err)
+				slog.Info("exif: decoding", "path", path, "error", err)
 			}
 		}
 
@@ -145,7 +146,7 @@ func selectEXIFFile(src, dst string) fs.WalkDirFunc {
 		if x != nil {
 			t, err = x.DateTime()
 			if err != nil {
-				log.Printf("no date info %q: %s", path, err)
+				slog.Info("no date info", "path", path, "error", err)
 			}
 		}
 		if x == nil {
@@ -198,14 +199,14 @@ func selectEXIFFile(src, dst string) fs.WalkDirFunc {
 			if le, ok := err.(*os.LinkError); ok {
 				err = fileCopy(path, dst)
 				if err != nil {
-					log.Printf("error: %q: %T: %s", path, err, err)
-					log.Printf("linkerror: %q: %T: %s", path, le.Err, le.Err)
+					slog.Info("file copy", "path", path, "error", err, "error_type", reflect.TypeOf(err))
+					slog.Info("link", "path", path, "error", le.Err, "error_type", reflect.TypeOf(le.Err))
 					return nil
 				}
 				return nil
 			}
 			if errors.Is(err, os.ErrExist) {
-				log.Println("errexist:", err)
+				slog.Info("errexist", "error", err)
 				return nil
 			}
 			return fmt.Errorf("link '%s/%s': %w", finalDst, d.Name(), err)
@@ -232,8 +233,27 @@ func fileCopy(srcPath, dstPath string) error {
 	return nil
 }
 
-func getDateFromFileName(filePath, ext string) (time.Time, error) {
+func getDateFromFileName(filePath string) (time.Time, error) {
 	_, fileName := filepath.Split(filePath)
+
+	t, errG := getDateFromSamsungGalaxyFileName(fileName)
+	if errG == nil {
+		return t, nil
+	}
+
+	t, errS := getDateFromSignalFileName(fileName)
+	if errS == nil {
+		return t, nil
+	}
+	return t, errors.Join(errG, errS)
+}
+
+func getDateFromSamsungGalaxyFileName(fileName string) (time.Time, error) {
+	// TODO: add file name date from signal exported files
+	if len(fileName) < 16 {
+		return time.Time{}, errors.New("wrong file name time format")
+	}
+
 	dateStr := fileName[:15] //strings.TrimSuffix(fileName, ext)
 
 	t, err := time.Parse("20060102_150405", dateStr)
@@ -241,5 +261,21 @@ func getDateFromFileName(filePath, ext string) (time.Time, error) {
 		return time.Time{}, err
 	}
 
+	return t, nil
+}
+
+func getDateFromSignalFileName(fileName string) (time.Time, error) {
+	const signalFileNameTemplate = "signal-2006-01-02-15-04-05"
+	if !strings.HasPrefix(fileName, "signal") ||
+		len(fileName) < len(signalFileNameTemplate) {
+		return time.Time{}, errors.New("not a signal media filename")
+	}
+
+	strippedFileName := fileName[:len(signalFileNameTemplate)]
+
+	t, err := time.Parse(signalFileNameTemplate, strippedFileName)
+	if err != nil {
+		return time.Time{}, err
+	}
 	return t, nil
 }
